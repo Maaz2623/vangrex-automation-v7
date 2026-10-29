@@ -6,8 +6,8 @@ import { geminiModel } from "../../../models/gemini-llm";
 import robot from "robotjs";
 import { delay } from "../../../utils/delay";
 
-export const browserOperator = tool({
-  description: "Use to operate browser",
+export const appOperator = tool({
+  description: "Use to operate applications.",
   inputSchema: z.object({
     task: z
       .string()
@@ -15,10 +15,10 @@ export const browserOperator = tool({
   }),
   execute: async ({ task }) => {
     try {
-      const app = await desktop.getCurrentBrowserWindow();
+      const app = await desktop.getCurrentApplication();
 
       if (!app) {
-        throw new Error("Not a browser window.");
+        throw new Error("Current application is not the intended application.");
       }
 
       const tree = desktop.getWindowTreeResult(app.processName(), app.name(), {
@@ -30,7 +30,7 @@ export const browserOperator = tool({
       const actionResult = await generateText({
         model: geminiModel,
         instructions: "Responsible to read the ui and perform the action.",
-        prompt: `Current State: ${tree.formatted}. Task is ${task}. Browser: ${app.processName()}`,
+        prompt: `Current State: ${tree.formatted}. Task is ${task}. App: ${app.processName()}`,
         output: Output.object({
           schema: z.object({
             requiresAction: z.boolean(),
