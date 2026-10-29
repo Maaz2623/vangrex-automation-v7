@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "v1": "bun run ./src/testing/v1/main.ts"
+    "v1": "bun run ./src/testing/v1/main.ts",
+    "jarvis": "lk agent console ./src/livekit/main.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"

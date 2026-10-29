@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import z from "zod";
-import { desktop } from "../../../utils/desktop";
+import { desktop } from "../../../utils/desktop.ts";
 
 export const openApp = tool({
   description: "Use to search and open applications.",

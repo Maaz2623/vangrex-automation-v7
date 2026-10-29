@@ -1,10 +1,10 @@
 import { generateText, Output, tool } from "ai";
 import z from "zod";
-import { desktop } from "../../../utils/desktop";
-import { Terminator } from "../../../utils/terminator";
-import { geminiModel } from "../../../models/gemini-llm";
+import { desktop } from "../../../utils/desktop.ts";
+import { Terminator } from "../../../utils/terminator.ts";
+import { geminiModel } from "../../../models/gemini-llm.ts";
 import robot from "robotjs";
-import { delay } from "../../../utils/delay";
+import { delay } from "../../../utils/delay.ts";
 
 export const appOperator = tool({
   description: "Use to operate applications.",

@@ -1,14 +1,13 @@
 import { Agent, dedent, inference, tool } from "@livekit/agents";
 import z from "zod";
 import robot from "robotjs";
-import { desktop } from "../utils/desktop.ts";
-import * as Terminator from "@mediar-ai/terminator";
 import { generateText, Output } from "ai";
 import { google } from "@ai-sdk/google";
+import { vangrexAgent } from "../testing/v1/main.ts";
 
 export function createAgent() {
   return Agent.create({
-    instructions: dedent` You are a friendly, reliable voice assistant that answers questions, explains topics, and completes tasks with available tools.
+    instructions: dedent`You are a professional assistant like jarvis, reliable voice assistant that answers questions, explains topics, and completes tasks with available tools.
 
         # Output rules
 
@@ -48,85 +47,18 @@ export function createAgent() {
     }),
 
     tools: {
-      click: tool({
-        description: "Use to move click elements on the screen.",
+      desktop_automator: tool({
+        description: "Use for desktop related automation.",
         parameters: z.object({
-          task: z.string().describe("The task to accomplish"),
+          task: z.string().describe("The user task."),
         }),
         execute: async ({ task }) => {
-          const app = await desktop.getCurrentApplication();
-
-          const appName = app.processName();
-
-          const tree = desktop.getWindowTreeResult(appName, undefined, {
-            propertyMode: Terminator.PropertyLoadingMode.Complete,
-
-            formatOutput: true,
-
-            treeOutputFormat: Terminator.TreeOutputFormat.ClusteredYaml,
-
-            includeMonitorScreenshots: false,
-            includeWindowScreenshot: false,
+          const result = await vangrexAgent.generate({
+            prompt: task,
           });
-
-          const selectionResult = await generateText({
-            model: google("gemini-3.5-flash-lite"),
-
-            instructions: `
-Select the most appropriate UI element for the next action.
-
-Choose only from the provided matching elements.
-Return the exact role and exact name as they appear in the UI tree.
-Do not invent, rename, or normalize element names.
-Return the role in PascalCase.
-
-If action type is typeText others remain undefeined and don't return. No click required before typing.
-
-Application: ${appName}
-`,
-
-            prompt: `
-Overall task: ${task}
-
-Matching elements:
-${tree.formatted}
-
-Select the element that should be acted upon next.
-`,
-
-            output: Output.object({
-              schema: z.object({
-                selectedElement: z.object({
-                  role: z.string(),
-                  name: z.string(),
-                }),
-              }),
-            }),
-          });
-
-          const selector = `role:${selectionResult.output.selectedElement.role} && text:${selectionResult.output.selectedElement.name}`;
-
-          const element = await app.locator(selector).first(3000);
-
-          const bounds = element.bounds();
-
-          console.log("[operate] Element bounds:", bounds);
-
-          const targetX = Math.round(bounds.x + bounds.width / 2);
-
-          const targetY = Math.round(bounds.y + bounds.height / 2);
-
-          console.log("[operate] Target coordinates:", {
-            x: targetX,
-            y: targetY,
-          });
-
-          robot.moveMouseSmooth(targetX, targetY);
-          robot.mouseClick();
 
           return {
-            success: true,
-            message: `${task} accomplished.`,
+            message: result.text,
           };
         },
       }),
