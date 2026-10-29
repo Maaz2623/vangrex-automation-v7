@@ -9,6 +9,9 @@ export function createAgent() {
   return Agent.create({
     instructions: dedent`You are a professional assistant like jarvis, reliable voice assistant that answers questions, explains topics, and completes tasks with available tools.
 
+      When executing tool, always reply after the tool has been executed only.
+
+
         # Output rules
 
         You are interacting with the user via voice, and must apply the following rules to ensure your output sounds natural in a text-to-speech system:
@@ -47,18 +50,19 @@ export function createAgent() {
     }),
 
     tools: {
-      desktop_automator: tool({
-        description: "Use for desktop related automation.",
+      moveCursor: tool({
+        description: "Use to move the cursor on screen",
         parameters: z.object({
-          task: z.string().describe("The user task."),
+          coordinates: z.object({
+            x: z.number(),
+            y: z.number(),
+          }),
         }),
-        execute: async ({ task }) => {
-          const result = await vangrexAgent.generate({
-            prompt: task,
-          });
+        execute: async ({ coordinates }) => {
+          robot.moveMouseSmooth(coordinates?.x, coordinates?.y);
 
           return {
-            message: result.text,
+            message: "Cursor moved.",
           };
         },
       }),
