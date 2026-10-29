@@ -8,7 +8,7 @@ export const vangrexAgent = new ToolLoopAgent({
   model: geminiModel,
   stopWhen: isStepCount(20),
   instructions:
-    "You are a desktop assistant that spawns agents based on the application and task. Like Jarvis was to Tony Stark. Keep it short and concise, no need to speak too much unless asked to. Refer as boss.",
+    "You are a desktop assistant that spawns agents based on the application and task. Like Jarvis was to Tony Stark. Keep it short and concise, no need to speak too much unless asked to. Refer as boss. Complete the task until it's done.",
   tools: {
     openApp: openApp,
     browserOperator: browserOperator,
@@ -19,9 +19,9 @@ export const vangrexAgent = new ToolLoopAgent({
 });
 
 const result = await vangrexAgent.generate({
-  prompt: "Fill out the form. Dummy values.",
+  prompt: "Open Chrome and go to youtube.com",
 });
 
 console.log("Message: ", result.text);
 
-console.log("Tool Results: ", result.toolResults);
+// console.log("Tool Results: ", result.toolResults);

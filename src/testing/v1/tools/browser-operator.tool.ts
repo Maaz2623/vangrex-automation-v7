@@ -73,17 +73,16 @@ export const browserOperator = tool({
               })
               .optional()
               .describe("Use only when required."),
-            fillFormInBrowserDom: z.object({
-              
-            })
           }),
         }),
       });
 
+      console.log(actionResult.output);
+
       if (!actionResult.output.requiresAction) {
         return {
           success: true,
-          message: `Actoin required: ${actionResult.output.requiresAction}. Reason: ${actionResult.output.requiresActionReason}`,
+          message: `Action required: ${actionResult.output.requiresAction}. Reason: ${actionResult.output.requiresActionReason}`,
         };
       }
 
