@@ -1,85 +1,74 @@
-import User32 from "@bun-win32/user32";
+import { delay } from "./src/utils/delay";
 import { desktop } from "./src/utils/desktop";
-import { Terminator } from "./src/utils/terminator";
 
-type ForegroundApp = {
-  hwnd: bigint;
-  processId: number;
-  title: string;
+const MAX_DEPTH = 6;
+const MAX_NODES = 150;
+const ELEMENT_TIMEOUT_MS = 1500;
+
+type TreeNode = {
+  role: string | null;
+  name: string | null;
+  bounds: unknown;
+  children: TreeNode[];
+  error?: string;
 };
 
-function getForegroundApp(): ForegroundApp | null {
-  const hwnd = User32.GetForegroundWindow();
+let visitedNodes = 0;
 
-  if (hwnd === 0n) {
-    return null;
+async function inspectElement(
+  element: Awaited<ReturnType<typeof desktop.locator>["first"]> extends never
+    ? never
+    : any,
+  depth: number,
+): Promise<TreeNode> {
+  const node: TreeNode = {
+    role: null,
+    name: null,
+    bounds: null,
+    children: [],
+  };
+
+  try {
+    node.role = await element.role();
+    node.name = await element.name();
+    node.bounds = await element.bounds();
+  } catch (error) {
+    node.error = String(error);
+    return node;
   }
 
-  const pidBuffer = Buffer.alloc(4);
-  User32.GetWindowThreadProcessId(hwnd, pidBuffer.ptr);
+  visitedNodes++;
 
-  const processId = pidBuffer.readUInt32LE(0);
+  if (depth >= MAX_DEPTH || visitedNodes >= MAX_NODES) {
+    return node;
+  }
 
-  const titleBuffer = Buffer.alloc(1024);
-  User32.GetWindowTextW(hwnd, titleBuffer.ptr, 512);
+  try {
+    // children() is synchronous in the installed Terminator API.
+    const children = element.children();
 
-  const title = new TextDecoder("utf-16le").decode(titleBuffer).split("\0")[0];
+    for (const child of children) {
+      if (visitedNodes >= MAX_NODES) break;
 
-  return { hwnd, processId, title };
-}
-
-function getProcessName(processId: number): string {
-  const result = Bun.spawnSync({
-    cmd: [
-      "powershell.exe",
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      `(Get-Process -Id ${processId} -ErrorAction SilentlyContinue).ProcessName`,
-    ],
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-
-  return Buffer.from(result.stdout).toString("utf8").trim() || "Unknown";
-}
-
-async function main() {
-  let previousHwnd: bigint | null = null;
-  console.log(
-    "Monitoring foreground application changes... Press Ctrl+C to stop.\n",
-  );
-
-  while (true) {
-    try {
-      const app = getForegroundApp();
-
-      if (app && app.hwnd !== previousHwnd) {
-        const processName = getProcessName(app.processId);
-
-        console.log("Application changed");
-        console.log(`  Process:   ${processName}`);
-        console.log(`  PID:       ${app.processId}`);
-        console.log(`  HWND:      ${app.hwnd}`);
-        console.log(`  Title:     ${app.title || "(untitled)"}`);
-        console.log("----------------------------------------");
-
-        previousHwnd = app.hwnd;
-        const tree = await desktop.getWindowTreeResult(processName, app.title, {
-          treeOutputFormat: Terminator.TreeOutputFormat.ClusteredYaml,
-          formatOutput: true,
-          propertyMode: Terminator.PropertyLoadingMode.Complete,
-          includeWindowScreenshot: false,
-        });
-
-        console.log(tree.formatted?.slice(0, 500));
-      }
-    } catch (error) {
-      console.error("Foreground detection error:", error);
+      node.children.push(await inspectElement(child, depth + 1));
     }
-
-    await Bun.sleep(500);
+  } catch (error) {
+    node.error = String(error);
   }
+
+  return node;
 }
 
-main();
+await delay(1000);
+
+console.log("Finding Start window...");
+
+const start = await desktop.locator("role:Window|name:Start").first(2000);
+
+console.log("Start found. Traversing manually...");
+
+const tree = await inspectElement(start, 0);
+
+console.log("Traversal finished. Nodes:", visitedNodes);
+
+console.dir(tree, { depth: null });
