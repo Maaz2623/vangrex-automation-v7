@@ -6,7 +6,8 @@ import { geminiModel } from "./src/models/gemini-llm";
 import z from "zod";
 import robot from "robotjs";
 
-const task = "Set font size to 12";
+const task =
+  "Create a new request on http://localhost:3000/api/products in thunder client.";
 
 let step = "Inspect the current UI and determine the first action.";
 
@@ -298,10 +299,9 @@ Do not restart the workflow just because a previous menu disappeared.
 
       executedActions.add(actionKey);
 
-      element.typeText("", {
+      element.typeText(text, {
         clearBeforeTyping: true,
       });
-      robot.typeStringDelayed(text, 500);
     }
 
     // Allow the UI to settle.
