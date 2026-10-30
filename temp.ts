@@ -1,74 +1,33 @@
 import { delay } from "./src/utils/delay";
 import { desktop } from "./src/utils/desktop";
+import robot from "robotjs";
 
-const MAX_DEPTH = 6;
-const MAX_NODES = 150;
-const ELEMENT_TIMEOUT_MS = 1500;
+await delay(2000);
 
-type TreeNode = {
-  role: string | null;
-  name: string | null;
-  bounds: unknown;
-  children: TreeNode[];
-  error?: string;
-};
+const element1 = await desktop
+  .locator("process:Start >> role:ListItem && name:Power")
+  .first(2000);
 
-let visitedNodes = 0;
+const bounds = element1.bounds();
 
-async function inspectElement(
-  element: Awaited<ReturnType<typeof desktop.locator>["first"]> extends never
-    ? never
-    : any,
-  depth: number,
-): Promise<TreeNode> {
-  const node: TreeNode = {
-    role: null,
-    name: null,
-    bounds: null,
-    children: [],
-  };
+const targetX = Math.round(bounds.x + bounds.width / 2);
+const targetY = Math.round(bounds.y + bounds.height / 2);
 
-  try {
-    node.role = await element.role();
-    node.name = await element.name();
-    node.bounds = await element.bounds();
-  } catch (error) {
-    node.error = String(error);
-    return node;
-  }
+robot.moveMouseSmooth(targetX, targetY);
+robot.mouseClick();
 
-  visitedNodes++;
+await delay(2000);
 
-  if (depth >= MAX_DEPTH || visitedNodes >= MAX_NODES) {
-    return node;
-  }
+const element2 = await desktop
+  .locator("process:Start >> role:Button && name:Shut down")
+  .first(2000);
 
-  try {
-    // children() is synchronous in the installed Terminator API.
-    const children = element.children();
+const shutdownBounds = element2.bounds();
 
-    for (const child of children) {
-      if (visitedNodes >= MAX_NODES) break;
+const shutdownTargetX = Math.round(shutdownBounds.x + shutdownBounds.width / 2);
+const shutdownTargetY = Math.round(
+  shutdownBounds.y + shutdownBounds.height / 2,
+);
 
-      node.children.push(await inspectElement(child, depth + 1));
-    }
-  } catch (error) {
-    node.error = String(error);
-  }
-
-  return node;
-}
-
-await delay(1000);
-
-console.log("Finding Start window...");
-
-const start = await desktop.locator("role:Window|name:Start").first(2000);
-
-console.log("Start found. Traversing manually...");
-
-const tree = await inspectElement(start, 0);
-
-console.log("Traversal finished. Nodes:", visitedNodes);
-
-console.dir(tree, { depth: null });
+robot.moveMouseSmooth(shutdownTargetX, shutdownTargetY);
+robot.mouseClick();
