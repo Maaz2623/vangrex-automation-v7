@@ -5,6 +5,8 @@
       "name": "vangrex-automation-v7",
       "dependencies": {
         "@ai-sdk/google": "^4.0.107",
+        "@bun-win32/kernel32": "^3.0.0",
+        "@bun-win32/user32": "^5.0.0",
         "@livekit/agents": "^1.9.5",
         "@livekit/plugins-ai-coustics": "^0.3.5",
         "@mediar-ai/terminator": "^0.24.32",
@@ -14,7 +16,7 @@
         "zod": "^4.6.7",
       },
       "devDependencies": {
-        "@types/bun": "latest",
+        "@types/bun": "^1.4.4",
       },
       "peerDependencies": {
         "typescript": "^5",
@@ -31,6 +33,12 @@
     "@ai-sdk/provider-utils": ["@ai-sdk/provider-utils@5.0.70", "", { "dependencies": { "@ai-sdk/provider": "4.0.34", "@standard-schema/spec": "^1.1.0", "@workflow/serde": "4.1.0", "eventsource-parser": "^3.0.8", "undici": "^7.29.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-nU213UNVHWDoEKIZ5Hm3uGPmfW7EBHC2GkIJJEDKh4HLQWgh/eizrW2jmY4efxWf7Tf/yTzKD0t6sd4kVUKlyQ=="],
 
     "@bufbuild/protobuf": ["@bufbuild/protobuf@1.10.1", "", {}, "sha512-wJ8ReQbHxsAfXhrf9ixl0aYbZorRuOWpBNzm8pL8ftmSxQx/wnJD5Eg861NwJU/czy2VXFIebCeZnZrI9rktIQ=="],
+
+    "@bun-win32/core": ["@bun-win32/core@2.0.1", "", { "peerDependencies": { "typescript": "^5" } }, "sha512-3xqC3LKrQNOXvvBWFi/CPdS45JllJad6VpJqP/GWdFMhwEe2GlMTV7qnrTRC22fz6J2ycGzxyA/A7Qwf5gKBFw=="],
+
+    "@bun-win32/kernel32": ["@bun-win32/kernel32@3.0.0", "", { "dependencies": { "@bun-win32/core": "2.0.1" }, "peerDependencies": { "typescript": "^5" } }, "sha512-vbIVl7I+cdQ/l/zRxJHAsCbjgtQsX0TRbX0uGkgceze9CO2HCiqA1xsFqh44eU6cq9E5cZc3hUiUdR16GqSYrg=="],
+
+    "@bun-win32/user32": ["@bun-win32/user32@5.0.0", "", { "dependencies": { "@bun-win32/core": "2.0.1" }, "peerDependencies": { "typescript": "^5" } }, "sha512-oi9gSKYPv23tXpY76w/PCcAdHCaDWybOuKeeQb9Bp3uHdvq5ok1o21/aeWYZUT7T+//Hr5nrxSOaCN1Vv9t+VA=="],
 
     "@datastructures-js/deque": ["@datastructures-js/deque@1.0.8", "", {}, "sha512-PSBhJ2/SmeRPRHuBv7i/fHWIdSC3JTyq56qb+Rq0wjOagi0/fdV5/B/3Md5zFZus/W6OkSPMaxMKKMNMrSmubg=="],
 

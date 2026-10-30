@@ -8,6 +8,8 @@
     "jsx": "react-jsx",
     "allowJs": true,
 
+    "types": ["Bun"],
+
     // Bundler mode
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,

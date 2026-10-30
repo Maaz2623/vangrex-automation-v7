@@ -1,100 +1,85 @@
-process.env.TERMINATOR_ACTION_OVERLAY = "0";
-
-import { generateText, Output } from "ai";
+import User32 from "@bun-win32/user32";
 import { desktop } from "./src/utils/desktop";
 import { Terminator } from "./src/utils/terminator";
-import { clickWithUiDiff } from "./src/utils/ui-tree-diff";
-import { geminiModel } from "./src/models/gemini-llm";
-import z from "zod";
-import { delay } from "./src/utils/delay";
 
-const task = `change theme to solarized light`;
+type ForegroundApp = {
+  hwnd: bigint;
+  processId: number;
+  title: string;
+};
 
-await delay(3000);
+function getForegroundApp(): ForegroundApp | null {
+  const hwnd = User32.GetForegroundWindow();
 
-let app = await desktop.getCurrentApplication();
-let appName = app.processName();
+  if (hwnd === 0n) {
+    return null;
+  }
 
-function getFullTree(processName: string): string {
-  const { formatted } = desktop.getWindowTreeResult(processName, undefined, {
-    formatOutput: true,
-    treeOutputFormat: Terminator.TreeOutputFormat.ClusteredYaml,
-    propertyMode: Terminator.PropertyLoadingMode.Complete,
-  });
+  const pidBuffer = Buffer.alloc(4);
+  User32.GetWindowThreadProcessId(hwnd, pidBuffer.ptr);
 
-  return formatted as string;
+  const processId = pidBuffer.readUInt32LE(0);
+
+  const titleBuffer = Buffer.alloc(1024);
+  User32.GetWindowTextW(hwnd, titleBuffer.ptr, 512);
+
+  const title = new TextDecoder("utf-16le").decode(titleBuffer).split("\0")[0];
+
+  return { hwnd, processId, title };
 }
 
-let formatted = getFullTree(appName);
-
-for (let i = 0; i < 8; i++) {
-  const result = await generateText({
-    model: geminiModel,
-
-    instructions: `
-You are a desktop UI automation agent.
-
-Select exactly one element from the provided UI tree to perform the next action.
-
-Rules:
-1. Select an element that exists in the provided UI tree.
-2. Return its exact role and exact name as displayed in the tree.
-3. ListItem, TreeItem, Text, Group, and other non-Button elements may be clickable.
-4. Choose an element relevant to the user's task.
-5. Choose only one action per iteration.
-6. Do not assume a click succeeded.
-7. The next iteration must use the latest UI state.
-`,
-
-    prompt: `
-Task: ${task}
-
-Current application: ${appName}
-
-UI Tree:
-${formatted}
-`,
-
-    output: Output.object({
-      schema: z.object({
-        appName: z.string(),
-        elementName: z.string(),
-        elementRole: z.string(),
-        actionType: z.object({
-          click: z.boolean().optional(),
-        }),
-      }),
-    }),
+function getProcessName(processId: number): string {
+  const result = Bun.spawnSync({
+    cmd: [
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `(Get-Process -Id ${processId} -ErrorAction SilentlyContinue).ProcessName`,
+    ],
+    stdout: "pipe",
+    stderr: "ignore",
   });
 
-  const output = result.output;
+  return Buffer.from(result.stdout).toString("utf8").trim() || "Unknown";
+}
 
-  console.log("Selected:", output);
-  console.log("Input tokens:", result.usage.inputTokens);
+async function main() {
+  let previousHwnd: bigint | null = null;
+  console.log(
+    "Monitoring foreground application changes... Press Ctrl+C to stop.\n",
+  );
 
-  const clicked = await clickWithUiDiff(output.elementRole, output.elementName);
+  while (true) {
+    try {
+      const app = getForegroundApp();
 
-  console.log("Action result:", clicked);
+      if (app && app.hwnd !== previousHwnd) {
+        const processName = getProcessName(app.processId);
 
-  // Allow the UI to react to the action.
-  await delay(500);
+        console.log("Application changed");
+        console.log(`  Process:   ${processName}`);
+        console.log(`  PID:       ${app.processId}`);
+        console.log(`  HWND:      ${app.hwnd}`);
+        console.log(`  Title:     ${app.title || "(untitled)"}`);
+        console.log("----------------------------------------");
 
-  // Detect the application that is active after the action.
-  const currentApp = await desktop.getCurrentApplication();
-  const currentAppName = currentApp.processName();
+        previousHwnd = app.hwnd;
+        const tree = await desktop.getWindowTreeResult(processName, app.title, {
+          treeOutputFormat: Terminator.TreeOutputFormat.ClusteredYaml,
+          formatOutput: true,
+          propertyMode: Terminator.PropertyLoadingMode.Complete,
+          includeWindowScreenshot: false,
+        });
 
-  if (currentAppName !== appName) {
-    // Application changed: fetch the complete tree.
-    console.log(`Application changed: ${appName} -> ${currentAppName}`);
+        console.log(tree.formatted?.slice(0, 500));
+      }
+    } catch (error) {
+      console.error("Foreground detection error:", error);
+    }
 
-    app = currentApp;
-    appName = currentAppName;
-    formatted = getFullTree(appName);
-  } else if (clicked.hasChanges && clicked.uiDiff) {
-    // Same application: use the UI diff when available.
-    formatted = clicked.uiDiff;
-  } else {
-    // No usable diff: fetch the complete tree for a reliable state.
-    formatted = getFullTree(appName);
+    await Bun.sleep(500);
   }
 }
+
+main();
