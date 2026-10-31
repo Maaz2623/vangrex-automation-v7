@@ -7,174 +7,377 @@ import z from "zod";
 import robot from "robotjs";
 import { clickWithUiDiff } from "./src/utils/ui-tree-diff";
 
+// ============================================================
+// CONFIGURATION
+// ============================================================
+
 const task = "Change theme to solarized light.";
 
+const MAX_STEPS = 10;
+
 let step = "Inspect the current UI and determine the first action.";
+let pendingVerification = false;
+
+// Initially, retrieve the complete tree.
+// After a successful click, replace it with the UI diff.
+let formatted = "";
+let useUiDiff = false;
+
+const executedActions = new Set<string>();
 
 const app = await desktop.getCurrentApplication();
 const appName = app.processName();
 
-const MAX_STEPS = 8;
+// ============================================================
+// TOKEN USAGE TRACKER
+// ============================================================
 
-// Prevent repeating the same action unnecessarily.
-const executedActions = new Set<string>();
+type TokenUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
+};
 
-// Track whether the final action has been performed.
-let pendingVerification = false;
+const tokenTotals = {
+  calls: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  cachedInputTokens: 0,
+  reasoningTokens: 0,
+};
+
+function getNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function readTokenUsage(usage: unknown): TokenUsage {
+  if (!usage || typeof usage !== "object") {
+    return {};
+  }
+
+  const u = usage as Record<string, unknown>;
+
+  const inputDetails =
+    u.inputTokenDetails && typeof u.inputTokenDetails === "object"
+      ? (u.inputTokenDetails as Record<string, unknown>)
+      : {};
+
+  const outputDetails =
+    u.outputTokenDetails && typeof u.outputTokenDetails === "object"
+      ? (u.outputTokenDetails as Record<string, unknown>)
+      : {};
+
+  const inputTokens = getNumber(u.inputTokens) ?? getNumber(u.promptTokens);
+
+  const outputTokens =
+    getNumber(u.outputTokens) ?? getNumber(u.completionTokens);
+
+  const totalTokens =
+    getNumber(u.totalTokens) ??
+    (inputTokens !== undefined && outputTokens !== undefined
+      ? inputTokens + outputTokens
+      : undefined);
+
+  const cachedInputTokens =
+    getNumber(inputDetails.cacheReadTokens) ??
+    getNumber(inputDetails.cachedTokens) ??
+    getNumber(u.cachedInputTokens) ??
+    getNumber(u.cachedTokens);
+
+  const reasoningTokens =
+    getNumber(outputDetails.reasoningTokens) ?? getNumber(u.reasoningTokens);
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    cachedInputTokens,
+    reasoningTokens,
+  };
+}
+
+function logTokenUsage(
+  stepNumber: number,
+  usage: unknown,
+  providerMetadata?: unknown,
+): void {
+  const parsed = readTokenUsage(usage);
+
+  tokenTotals.calls++;
+
+  tokenTotals.inputTokens += parsed.inputTokens ?? 0;
+  tokenTotals.outputTokens += parsed.outputTokens ?? 0;
+
+  tokenTotals.totalTokens +=
+    parsed.totalTokens ??
+    (parsed.inputTokens ?? 0) + (parsed.outputTokens ?? 0);
+
+  tokenTotals.cachedInputTokens += parsed.cachedInputTokens ?? 0;
+  tokenTotals.reasoningTokens += parsed.reasoningTokens ?? 0;
+
+  console.log("\n========== TOKEN USAGE ==========");
+  console.log("Step:", stepNumber);
+  console.log("Input tokens:", parsed.inputTokens ?? "Not reported");
+  console.log("Output tokens:", parsed.outputTokens ?? "Not reported");
+  console.log("Total tokens:", parsed.totalTokens ?? "Not reported");
+  console.log(
+    "Cached input tokens:",
+    parsed.cachedInputTokens ?? "Not reported",
+  );
+  console.log("Reasoning tokens:", parsed.reasoningTokens ?? "Not reported");
+
+  console.log("Raw usage:", JSON.stringify(usage ?? null, null, 2));
+
+  if (providerMetadata !== undefined) {
+    console.log(
+      "Provider metadata:",
+      JSON.stringify(providerMetadata, null, 2),
+    );
+  }
+
+  console.log("\n========== CUMULATIVE TOTALS ==========");
+  console.log("AI calls:", tokenTotals.calls);
+  console.log("Input tokens:", tokenTotals.inputTokens);
+  console.log("Output tokens:", tokenTotals.outputTokens);
+  console.log("Total tokens:", tokenTotals.totalTokens);
+  console.log("Cached input tokens:", tokenTotals.cachedInputTokens);
+  console.log("Reasoning tokens:", tokenTotals.reasoningTokens);
+  console.log("=======================================\n");
+}
+
+// ============================================================
+// ACTION SCHEMA
+// ============================================================
 
 const actionSchema = z.object({
   status: z.object({
     isTaskComplete: z
       .boolean()
       .describe(
-        "True only when the task has been completed and there is evidence of success.",
+        "True only when the current UI provides evidence that the task is complete.",
       ),
 
     reason: z
       .string()
       .describe(
-        "Explain the current state and why the task is complete or incomplete.",
+        "Explain the current UI state and the evidence supporting your decision.",
       ),
 
     nextStep: z
       .string()
       .optional()
-      .describe("The next action to perform if the task is incomplete."),
+      .describe("The immediate next action or verification needed."),
   }),
 
   element: z
     .object({
       name: z
         .string()
-        .describe("The exact element name from the current UI tree."),
+        .describe("The exact element name from the current UI context."),
 
       role: z
         .string()
-        .describe("The exact element role from the current UI tree."),
+        .describe("The exact element role from the current UI context."),
     })
     .optional(),
 
   action: z.object({
-    click: z
-      .boolean()
-      .describe(
-        "True to click the target element. If true, typing must be disabled.",
-      ),
+    click: z.boolean().describe("True to click the target element."),
 
     type: z.object({
-      enabled: z
-        .boolean()
-        .describe(
-          "True to focus the target element and type text without clicking.",
-        ),
+      enabled: z.boolean().describe("True to focus the target and type text."),
 
       text: z
         .string()
         .optional()
-        .describe("Text to type when typing is enabled."),
+        .describe("The text to type when typing is enabled."),
     }),
 
     completesTask: z
       .boolean()
-      .describe("True if this action directly completes the task."),
+      .describe(
+        "True only if performing this action should achieve the requested outcome directly.",
+      ),
   }),
 });
 
-let { formatted } = desktop.getWindowTreeResult(appName, undefined, {
-  formatOutput: true,
-  treeOutputFormat: Terminator.TreeOutputFormat.ClusteredYaml,
-  propertyMode: Terminator.PropertyLoadingMode.Complete,
-});
+// ============================================================
+// HELPERS
+// ============================================================
+
+function normalize(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function getActionKey(
+  click: boolean,
+  role: string,
+  name: string,
+  text?: string,
+): string {
+  return click
+    ? `click:${normalize(role)}:${normalize(name)}`
+    : `type:${normalize(role)}:${normalize(name)}:${text ?? ""}`;
+}
+
+/**
+ * Retrieves the complete UI tree and replaces the current context.
+ */
+async function refreshFullTree(): Promise<void> {
+  const tree = await desktop.getWindowTreeResult(appName, undefined, {
+    formatOutput: true,
+    treeOutputFormat: Terminator.TreeOutputFormat.ClusteredYaml,
+    propertyMode: Terminator.PropertyLoadingMode.Complete,
+  });
+
+  formatted = tree.formatted as string;
+  useUiDiff = false;
+
+  console.log("\n========== FULL UI TREE ==========\n");
+  console.log(formatted);
+}
+
+/**
+ * Replaces the complete tree with the latest UI diff.
+ *
+ * If no usable diff is available, the next iteration will
+ * retrieve a fresh complete UI tree.
+ */
+function replaceTreeWithDiff(
+  uiDiff: string | undefined,
+  hasChanges: boolean | undefined,
+): void {
+  if (hasChanges && uiDiff?.trim()) {
+    formatted = uiDiff;
+    useUiDiff = true;
+
+    console.log("\n========== UI DIFF REPLACED THE TREE ==========\n");
+    console.log(formatted);
+    console.log("\nNext AI call will receive ONLY this UI diff.");
+  } else {
+    formatted = "";
+    useUiDiff = false;
+
+    console.log(
+      "\nNo usable UI diff was returned. The next iteration will retrieve the complete tree.",
+    );
+  }
+}
+
+// ============================================================
+// AUTOMATION LOOP
+// ============================================================
 
 for (let i = 0; i < MAX_STEPS; i++) {
-  console.log(formatted);
-
-  await delay(1000);
-
   console.log(`\n========== STEP ${i + 1} ==========\n`);
-
-  // Fetch the latest UI tree.
-
   console.log("Current step:", step);
+  console.log("Verification mode:", pendingVerification);
+  console.log("Using UI diff:", useUiDiff);
 
-  const performStep = await generateText({
-    model: geminiModel,
+  // ----------------------------------------------------------
+  // RETRIEVE UI CONTEXT
+  // ----------------------------------------------------------
 
-    instructions: `
-You are a desktop UI automation agent.
+  try {
+    // IMPORTANT:
+    // If formatted already contains a UI diff, do not overwrite it.
+    // Otherwise, retrieve the complete tree.
+    if (!useUiDiff || !formatted.trim()) {
+      await refreshFullTree();
+    } else {
+      console.log("\n========== CURRENT UI DIFF ==========\n");
+      console.log(formatted);
+    }
+  } catch (error) {
+    console.error("Failed to retrieve the UI tree:", error);
+    break;
+  }
 
-Your goal is to complete the user's task using the current UI tree.
+  await delay(300);
 
-## ACTION RULES
-1. Inspect the current UI tree before every action.
-2. Perform exactly ONE action per iteration.
-3. An action must be either CLICK or TYPE, never both.
-4. For CLICK: set action.click = true and action.type.enabled = false.
-5. For TYPE: set action.click = false and action.type.enabled = true.
-6. Never perform an action without identifying its target element.
-7. Use the exact element role and name from the current UI tree.
-8. Never invent elements or assume an element exists.
-9. Do not repeat an action that has already succeeded.
+  // ----------------------------------------------------------
+  // AI CALL
+  // ----------------------------------------------------------
 
-## ELEMENT DISAMBIGUATION
-10. Multiple elements can share the same name and role.
-11. Never assume the first matching element is the intended target.
-12. When multiple matching elements exist, inspect their surrounding UI context.
-13. Prefer the element whose parent, neighboring elements, and visible context
-    best match the user's request.
-14. For extension search results, identify the exact ListItem associated with
-    the requested extension and inspect its surrounding context.
-15. If necessary, open the matching ListItem's details to verify its identity.
-16. Do not click Install until the extension's identity is established.
-17. If the correct target cannot be distinguished from the current UI tree,
-    request additional UI information instead of guessing.
-18. Opening an item's details is a disambiguation step, not permission to
-    repeat the original search or restart the workflow.
+  let performStep;
 
-## ACTION HISTORY AND DUPLICATE PREVENTION
-19. Consider the previous step and current UI tree together when deciding
-    what to do next.
-20. Before proposing an action, determine whether it has already succeeded.
-21. If the expected UI transition occurred, advance to the next step.
-22. Do not repeat an action merely because its original element disappeared.
-23. Do not reopen menus, tabs, or panels that are already open.
-24. Do not repeat a search if the expected results are already visible.
-25. Do not repeat an installation if the extension already shows Installed,
-    Disable, Uninstall, or another reliable installed-state indicator.
-26. Do not explore alternative installation locations after a successful
-    installation.
-27. Retry an action only when the current UI provides evidence that it failed.
-28. If an action's outcome is uncertain, inspect the current state before
-    deciding whether to retry.
-29. If progress cannot be established, explain the uncertainty rather than
-    restarting the workflow.
+  try {
+    performStep = await generateText({
+      model: geminiModel,
 
-## TASK COMPLETION
-30. Set status.isTaskComplete = true only when the requested outcome is
-    supported by the current UI.
-31. If the task is complete, do not propose any further action.
-32. Set action.completesTask = true only when the proposed action directly
-    completes the task.
-33. After the final action, verify the outcome using the updated UI tree.
-34. If verification is inconclusive, do not automatically repeat the final
-    action or restart the workflow.
+      instructions: `
+You are a careful desktop UI automation agent.
 
-## OUTPUT RULES
-35. Return exactly one action per iteration.
-36. Keep nextStep focused on the immediate next action.
-37. Never restart the entire workflow when only one step remains.
-38. If multiple targets remain ambiguous, explain what additional UI
-    information is needed rather than guessing.
+Your task is to complete the user's request using the supplied UI context.
+
+IMPORTANT UI CONTEXT RULES
+1. The supplied UI context may be either a complete UI tree or a UI diff.
+2. If it is a complete tree, inspect it normally.
+3. If it is a UI diff, treat it as changes from the previous UI state.
+4. Do not assume the diff contains every element in the application.
+5. Use only elements supported by the supplied context.
+6. If the diff does not contain enough information to choose a valid target,
+   request a fresh complete UI tree instead of guessing.
+7. Return at most one action per iteration.
+8. Never invent an element name or role.
+9. Never click and type in the same iteration.
+10. Never repeat a successfully executed action unnecessarily.
+
+VS CODE THEME WORKFLOW
+For changing the theme to Solarized Light:
+
+1. If the Manage menu is closed, click Manage.
+2. If Manage is open, inspect its available menu items.
+3. If Themes is present, click Themes.
+4. Inspect the resulting submenu.
+5. If Color Theme is present, click Color Theme.
+6. Inspect the resulting theme picker.
+7. Select Solarized Light only if that exact option is visible.
+8. If the picker contains a search input, focus it and type
+   Solarized Light as a separate action.
+9. Inspect the resulting search results before selecting an option.
+10. Do not assume Solarized Light is installed or available.
+11. If the available context is insufficient, request a full UI inspection.
+
+ACTION HISTORY
+12. Consider the previous step and the executed action history.
+13. Advance the workflow when the UI indicates that an action succeeded.
+14. Do not reopen menus unnecessarily.
+15. Do not repeat an action just because its element disappeared.
+16. A proposed action has not necessarily executed.
+17. If the UI state is ambiguous, request a full UI inspection.
+
+VERIFICATION
+18. In verification mode, do not perform any actions.
+19. Confirm completion only when the supplied UI provides reliable evidence.
+20. If the supplied context is only a diff and does not establish the active
+    theme, request a fresh full UI inspection.
+21. Never repeat the final action merely because verification is inconclusive.
+
+OUTPUT
+22. Return one proposed action or no action.
+23. Set isTaskComplete true only when completion is supported by evidence.
+24. Set completesTask true only when the proposed action should directly
+    achieve the requested outcome.
+25. If no valid target can be established, explain what must be inspected.
 `,
 
-    prompt: `
+      prompt: `
 USER TASK:
 ${task}
 
 APPLICATION:
 ${appName}
 
-CURRENT UI TREE:
+UI CONTEXT TYPE:
+${useUiDiff ? "UI DIFF ONLY" : "COMPLETE UI TREE"}
+
+CURRENT UI CONTEXT:
 ${formatted}
 
 PREVIOUS STEP:
@@ -183,156 +386,293 @@ ${step}
 VERIFICATION MODE:
 ${pendingVerification}
 
-Determine the next appropriate action using the current UI tree.
+PREVIOUSLY EXECUTED ACTIONS:
+${JSON.stringify([...executedActions], null, 2)}
 
-If typing is needed, return the input element and the text to type.
-If clicking is needed, return the target element.
-Never enable clicking and typing simultaneously.
+Decide the next appropriate action using the supplied UI context.
 
-If verification mode is true, check whether the task appears complete.
-Do not restart the workflow just because a previous menu disappeared.
+If the context is a UI diff, do not assume it represents the entire
+application. If it does not contain enough information to identify a valid
+target, request a fresh complete UI inspection.
+
+If verification mode is true, do not perform another action.
+Determine whether the requested outcome is supported by the UI.
 `,
 
-    output: Output.object({
-      schema: actionSchema,
-    }),
-  });
+      output: Output.object({
+        schema: actionSchema,
+      }),
+    });
+  } catch (error) {
+    console.error("AI generation failed:", error);
+    break;
+  }
+
+  // ----------------------------------------------------------
+  // TOKEN USAGE
+  // ----------------------------------------------------------
+
+  logTokenUsage(i + 1, performStep.usage, performStep.providerMetadata);
 
   const output = performStep.output;
 
-  console.log("AI output:", output);
+  console.log("\nAI OUTPUT:\n", output);
 
-  // Stop when the model confirms completion.
-  if (output.status.isTaskComplete) {
-    console.log("\nTask completed:", output.status.reason);
+  // ----------------------------------------------------------
+  // VERIFICATION
+  // ----------------------------------------------------------
+
+  if (pendingVerification) {
+    if (output.status.isTaskComplete) {
+      console.log("\nTASK VERIFIED:", output.status.reason);
+    } else {
+      console.log("\nVERIFICATION INCONCLUSIVE:", output.status.reason);
+    }
+
     break;
   }
 
-  step = output.status.nextStep ?? output.status.reason;
-
-  // Avoid restarting the workflow if verification fails.
-  if (pendingVerification) {
+  // Do not trust a completion claim before verification.
+  if (output.status.isTaskComplete) {
     console.log(
-      "Verification inconclusive. Stopping to avoid repeating actions.",
+      "\nAI reported completion before verification:",
+      output.status.reason,
     );
 
-    console.log("Verification result:", output.status.reason);
-    break;
+    pendingVerification = true;
+
+    step = "Inspect the complete UI tree and verify the requested outcome.";
+
+    // Verification needs a complete tree, not just a diff.
+    formatted = "";
+    useUiDiff = false;
+
+    continue;
   }
+
+  // ----------------------------------------------------------
+  // VALIDATE ACTION
+  // ----------------------------------------------------------
 
   const shouldClick = output.action.click;
   const shouldType = output.action.type.enabled;
 
-  // Enforce mutually exclusive actions.
   if (shouldClick && shouldType) {
-    console.error(
-      "Invalid action: clicking and typing cannot happen in the same iteration.",
-    );
+    console.error("Invalid action: click and type cannot both be enabled.");
     break;
   }
 
   if (!shouldClick && !shouldType) {
-    console.log("No action requested. Refreshing the UI...");
+    console.log("No action proposed.");
+    console.log("Reason:", output.status.reason);
+
+    step = output.status.nextStep ?? output.status.reason;
+
+    // The AI may need elements that were not present in the diff.
+    // Retrieve the complete tree on the next iteration.
+    formatted = "";
+    useUiDiff = false;
+
     await delay(500);
     continue;
   }
 
   if (!output.element) {
-    console.error("Action requested without a target element.");
-    break;
+    console.error("The proposed action has no target element.");
+
+    formatted = "";
+    useUiDiff = false;
+
+    continue;
   }
 
   const { name, role } = output.element;
+  const text = output.action.type.text;
 
-  // Include the action type in the key.
-  // Clicking and typing on the same element are different actions.
-  const actionKey = shouldClick
-    ? `click:${role}:${name}`.toLowerCase()
-    : `type:${role}:${name}:${output.action.type.text ?? ""}`.toLowerCase();
+  const actionKey = getActionKey(shouldClick, role, name, text);
 
   if (executedActions.has(actionKey)) {
-    console.log(`Duplicate action blocked: ${actionKey}`);
-    break;
+    console.log("Duplicate action blocked:", actionKey);
+
+    step = `Inspect the complete UI tree after the previous action involving "${name}".`;
+
+    formatted = "";
+    useUiDiff = false;
+
+    await delay(500);
+    continue;
   }
 
-  const selector = `role:${role} && text:${name}`;
+  console.log("Proposed target:", { role, name });
+  console.log("Proposed action:", shouldClick ? "CLICK" : "TYPE");
 
-  console.log("Target selector:", selector);
+  // ----------------------------------------------------------
+  // EXECUTE ACTION
+  // ----------------------------------------------------------
 
   try {
-    const element = await app.locator(selector).first(2000);
+    const selector = `role:${role} && text:${name}`;
+
+    let element;
+
+    try {
+      element = await app.locator(selector).first(2000);
+    } catch (error) {
+      console.warn("Target not found:", {
+        role,
+        name,
+        error,
+      });
+
+      step =
+        `The element "${name}" was not found. ` +
+        "Inspect the complete, refreshed UI tree and determine the next action.";
+
+      formatted = "";
+      useUiDiff = false;
+
+      await delay(500);
+      continue;
+    }
+
+    // --------------------------------------------------------
+    // CLICK
+    // --------------------------------------------------------
 
     if (shouldClick) {
-      // CLICK ACTION: click only, never type.
       const bounds = element.bounds();
 
-      if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
-        console.log("Invalid element bounds.");
+      if (
+        !bounds ||
+        !Number.isFinite(bounds.x) ||
+        !Number.isFinite(bounds.y) ||
+        bounds.width <= 0 ||
+        bounds.height <= 0
+      ) {
+        console.error("Invalid target bounds:", bounds);
+
+        step = `Inspect the complete UI tree because "${name}" has invalid bounds.`;
+
+        formatted = "";
+        useUiDiff = false;
+
         await delay(500);
         continue;
       }
 
       const targetX = Math.round(bounds.x + bounds.width / 2);
+
       const targetY = Math.round(bounds.y + bounds.height / 2);
 
       console.log(`Clicking ${role}: ${name}`);
       console.log(`Coordinates: ${targetX}, ${targetY}`);
 
-      executedActions.add(actionKey);
-
       robot.moveMouseSmooth(targetX, targetY);
+
+      // This helper performs the click and returns its UI diff.
       const result = await clickWithUiDiff(
         element.role(),
         element.name() as string,
       );
 
-      if (result.hasChanges) {
-        formatted = result.uiDiff as string;
-      }
-    } else {
-      // TYPE ACTION: focus only, never click.
-      const text = output.action.type.text;
+      executedActions.add(actionKey);
 
+      console.log("Click result:", {
+        hasChanges: result.hasChanges,
+      });
+
+      // ------------------------------------------------------
+      // CRITICAL CHANGE:
+      // Replace the entire tree with ONLY the UI diff.
+      // ------------------------------------------------------
+
+      replaceTreeWithDiff(result.uiDiff, result.hasChanges);
+
+      // ------------------------------------------------------
+      // FINAL ACTION: VERIFY USING A COMPLETE TREE
+      // ------------------------------------------------------
+
+      if (output.action.completesTask) {
+        pendingVerification = true;
+
+        step =
+          "Inspect the complete UI tree and verify that Solarized Light is active.";
+
+        // Do not rely on a partial diff for final verification.
+        formatted = "";
+        useUiDiff = false;
+
+        console.log(
+          "Action executed. The next iteration will retrieve the complete tree for verification.",
+        );
+      } else {
+        step = output.status.nextStep ?? output.status.reason;
+      }
+    }
+
+    // --------------------------------------------------------
+    // TYPE
+    // --------------------------------------------------------
+    else {
       if (!text) {
-        console.error("Typing requested, but no text was provided.");
+        console.error("Typing was requested without any text.");
         break;
       }
 
       console.log(`Focusing ${role}: ${name}`);
 
-      // Focus the element through the Terminator element API.
-      element.focus();
+      await element.focus();
 
       await delay(200);
 
-      console.log(`Typing: ${text}`);
+      console.log("Typing:", text);
+
+      await element.typeText(text, {
+        clearBeforeTyping: true,
+      });
 
       executedActions.add(actionKey);
 
-      element.typeText(text, {
-        clearBeforeTyping: true,
-      });
+      // Typing does not return a UI diff through this helper.
+      // Retrieve a complete tree after typing.
+      formatted = "";
+      useUiDiff = false;
+
+      step =
+        output.status.nextStep ?? `Inspect the UI after typing into "${name}".`;
+
+      if (output.action.completesTask) {
+        pendingVerification = true;
+
+        step =
+          "Inspect the complete UI tree and verify that Solarized Light is active.";
+      }
     }
 
-    // Allow the UI to settle.
     await delay(800);
-
-    // Switch to verification mode after the final action.
-    if (output.action.completesTask) {
-      pendingVerification = true;
-
-      step = `Verify that the requested action succeeded. Do not repeat the previous action.`;
-
-      console.log(
-        "Action performed. The next iteration will verify the result.",
-      );
-    }
   } catch (error) {
-    console.error("Action failed:", error);
+    console.error("Action execution failed:", error);
 
-    console.log("Stopping to avoid accidental repeated actions.");
+    console.log("Stopping because the action outcome may be uncertain.");
+
     break;
   }
 }
 
+// ============================================================
+// FINAL TOKEN SUMMARY
+// ============================================================
+
+console.log("\n========================================");
+console.log("          FINAL TOKEN SUMMARY");
+console.log("========================================");
+
+console.log("Total AI calls:", tokenTotals.calls);
+console.log("Total input tokens:", tokenTotals.inputTokens);
+console.log("Total output tokens:", tokenTotals.outputTokens);
+console.log("Total tokens:", tokenTotals.totalTokens);
+console.log("Cached input tokens:", tokenTotals.cachedInputTokens);
+console.log("Reasoning tokens:", tokenTotals.reasoningTokens);
+
+console.log("========================================");
 console.log("\nAutomation loop finished.");

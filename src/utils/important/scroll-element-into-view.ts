@@ -1,4 +1,3 @@
-
 import robot from "robotjs";
 import { desktop } from "../desktop";
 import { delay } from "../delay";
@@ -97,11 +96,7 @@ export async function scrollElementIntoView(
     };
   }
 
-  for (
-    let attempt = 1;
-    attempt <= config.maxAttempts;
-    attempt++
-  ) {
+  for (let attempt = 1; attempt <= config.maxAttempts; attempt++) {
     try {
       // Reacquire the element on every attempt.
       const element = await desktop
@@ -117,20 +112,15 @@ export async function scrollElementIntoView(
 
       if (hasValidBounds(bounds, config)) {
         if (config.moveToElement) {
-          const targetX = Math.round(
-            bounds.x + bounds.width / 2,
-          );
+          const targetX = Math.round(bounds.x + bounds.width / 2);
 
-          const targetY = Math.round(
-            bounds.y + bounds.height / 2,
-          );
+          const targetY = Math.round(bounds.y + bounds.height / 2);
 
           robot.moveMouseSmooth(targetX, targetY);
+          robot.mouseClick();
         }
 
-        console.log(
-          `[ScrollIntoView] Element is visible: ${selector}`,
-        );
+        console.log(`[ScrollIntoView] Element is visible: ${selector}`);
 
         return {
           success: true,
@@ -143,9 +133,7 @@ export async function scrollElementIntoView(
       // A locator timeout should not terminate the entire operation.
       console.log(
         `[ScrollIntoView] Attempt ${attempt}: element unavailable.`,
-        error instanceof Error
-          ? error.message
-          : String(error),
+        error instanceof Error ? error.message : String(error),
       );
     }
 
@@ -171,9 +159,7 @@ export async function scrollElementIntoView(
         attempts: attempt,
         error:
           "Scrolling failed: " +
-          (error instanceof Error
-            ? error.message
-            : String(error)),
+          (error instanceof Error ? error.message : String(error)),
       };
     }
   }

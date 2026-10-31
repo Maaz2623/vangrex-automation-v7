@@ -1,12 +1,10 @@
-import { delay } from "./src/utils/delay";
 import { desktop } from "./src/utils/desktop";
-import { Terminator } from "./src/utils/terminator";
-await delay(2000);
+import { openApp } from "./src/utils/open-app";
 
-const tree = desktop.getWindowTreeResult("Start", undefined, {
-  formatOutput: true,
-  propertyMode: Terminator.PropertyLoadingMode.Complete,
-  treeOutputFormat: Terminator.TreeOutputFormat.ClusteredYaml,
-});
+await desktop.pressKey(`{Win}`);
 
-console.log(tree.formatted);
+const success = await openApp("Chrome");
+
+console.log(
+  success ? "Application opened successfully." : "Failed to open application.",
+);
