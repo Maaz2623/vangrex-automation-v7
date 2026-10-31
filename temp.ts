@@ -19,7 +19,7 @@ robot.mouseClick();
 await delay(2000);
 
 const element2 = await desktop
-  .locator("process:Start >> role:Button && name:Shut down")
+  .locator("process:Start >> role:MenuItem && name:Shut down")
   .first(2000);
 
 const shutdownBounds = element2.bounds();
